@@ -185,6 +185,7 @@ def gpt_response(input_str, table):
             - If user asks for query related to last Month always look for last Month from Currnet Month, also include first day and last day of month, while calculation.
             - If user asks for query related to last Qaurter always find the last quarter months acccording to indian financial year system and create query according to these months,also include first day and last day of month, while calculation.
             - Do all date computions in MM-DD-YYYY format only.
+            - If user ask to generate query based on task or description always contains keyword never look for exact match.
             Input:
             Query: {input_str}
             Output:
