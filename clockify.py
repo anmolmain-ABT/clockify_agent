@@ -193,12 +193,6 @@ def gpt_response(input_str, table):
             Return code that computes the answer and stores it in a variable named 'answer'
              """}
         ]
-
-
-
-
-
-
     )
     return response.choices[0].message.content
 
