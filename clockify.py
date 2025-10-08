@@ -202,9 +202,6 @@ def gpt_response(input_str, table):
     return response.choices[0].message.content
 
 def summarizer(table, user_query):
-    # print("-------------------------------------")
-    # print("ANSWER",table)
-    # print("-------------------------------------")
     response = openai.ChatCompletion.create(
         engine="gpt-4o-mini",
         messages=[
@@ -220,7 +217,7 @@ def summarizer(table, user_query):
     )
     return response.choices[0].message.content
 
-# def load_data(channel_id):
+# def load_data(channel_id): 
 #     data = get_clockify_sheet(channel_id)
 #     if not data.empty:
 #     # Ensure all column names are strings first
