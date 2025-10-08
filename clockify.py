@@ -44,7 +44,7 @@ def get_clockify_sheet(channel_id):
         return df
 
     # Only download on Saturday
-    if today.weekday() != 1:  # Not Saturday
+    if today.weekday() != 2:  # Not Saturday
         print("Clockify data can only be downloaded on Saturday. Returning empty DataFrame.")
         return pd.DataFrame()
 
@@ -149,11 +149,11 @@ def gpt_response(input_str, table):
     # print(input_str)
     response = openai.ChatCompletion.create(
         engine="gpt-4o",
-        messages=[
+        messages= [
             {"role": "system", "content": "Assistant is a large language model trained by OpenAI."},
             {"role": "user", "content": f"""
-            You are a data analysis assistant.  
-            Your task is to generate pandas code that answers the query **precisely** using the table. 
+            You are a data analysis assistant.
+            Your task is to generate pandas code that answers the query **precisely** using the table.
             Following is the details about each column of table:
             - project : This column will give you the name of project.
             - client : This column will give you the name of client who own this project.
@@ -161,14 +161,15 @@ def gpt_response(input_str, table):
             - task : This column will give you the detail of each task that are related to the project if the Task column is empty reffer to the column Description ot find details of the task.
             - user : This column will give you the information about developer name who is working on specific Task/Project.
             - tags : The project may have different type of tags like Billable(if the hours are within threshold), Unbillable( if the hours overshoot developer post their hour in this tag), Internal(if the work done by Devloper is Internal task and it is related to own company itself), Unapproved (if the hours are not approved by anyone, then they fall into this category).
-            - start date : The date when specific task is started.It is in format DD-MM-YYYY.
-            - end date : The date when specific task is finished.It is in format DD-MM-YYYY.
+            - start date : The date when specific task is started.It is in format mm-dd-yyyy.
+            - end date : The date when specific task is finished.It is in format mm-dd-yyyy.
             - duration : Total number of hours that are used to complete specific Task
-
-
+            
             Rules:
+            - Remember every data of the table columns are in lowercase.
+            - All computations related to dates should be done in dates not datetime
             - Carefully analyze all the columns that user is expecting as output.
-            - User can provide only first name also, so carefully analyze and use his full name for query.
+            - Carefully analyze the user query and output that user is expecting.
             - Use 'df' as the dataframe variable.
             - Only use the columns that are defined above.
             - Approach and create the query step by step , do not do everything in one go.
@@ -176,27 +177,34 @@ def gpt_response(input_str, table):
             - If using any other module must import it in the top, because at the end i want to execute the code.
             - Only return the exact answer to the query, nothing more.
             - Do not generate summaries, explanations, or extra text.
-            - If the query asks for information not present in the table, return exactly:
-              "Sorry i can provide you the answer from the file only".
+            - If the query asks for information not present in the table, return exactly: "Sorry i can provide you the answer from the file only".
             - Be careful with date formats, column names, and data types.
             - Always store the final output in a variable called 'answer'.
             - Do not use any ascending or descending order in code
-            - If user asks for query related to last week always look for last week from Monday to Saturday from current date.
-            - If user asks for query related to last Month always look for last Month Currnet Month.
-            - If user asks for query related to last Qaurter always find the last quarter months acccording to indian financial year system and create query according to these months.
-            - 
+            - If user asks for query related to last week always look for last week from Sunday to Saturday from current date.
+            - If user asks for query related to last Month always look for last Month from Currnet Month, also include first day and last day of month, while calculation.
+            - If user asks for query related to last Qaurter always find the last quarter months acccording to indian financial year system and create query according to these months,also include first day and last day of month, while calculation.
+            - Do all date computions in MM-DD-YYYY format only.
             Input:
             Query: {input_str}
-
             Output:
             Generate python pandas code to answer this question using 'df' as the dataframe.
             Return code that computes the answer and stores it in a variable named 'answer'
              """}
         ]
+
+
+
+
+
+
     )
     return response.choices[0].message.content
 
 def summarizer(table, user_query):
+    # print("-------------------------------------")
+    # print("ANSWER",table)
+    # print("-------------------------------------")
     response = openai.ChatCompletion.create(
         engine="gpt-4o-mini",
         messages=[
@@ -207,41 +215,87 @@ def summarizer(table, user_query):
             The answer is provided by LLM was : {table}. 
             if this response can be represented in table, return table starting and ending with ``` adjust the table width accordingly for symmetry in column widths. otherwise return simple string
             Do not add unnecessary details. 
-            - In the end always create a summary about the data like total or description of data,if data is greeting simply do not write greeting message, do not mention it as a summary.
+            - In the end always carefully create a toal summary about the data like total duration or description of data,if data is greeting simply do not write greeting message, do not mention it as a summary.
             """}
         ]
     )
     return response.choices[0].message.content
 
+# def load_data(channel_id):
+#     data = get_clockify_sheet(channel_id)
+#     if not data.empty:
+#     # Ensure all column names are strings first
+#         data.columns = [str(col).lower() for col in data.columns]
+#         data = data.applymap(lambda x: x.lower() if isinstance(x, str) else x)
+#         if 'user' in data.columns:
+#             data['user'] = data['user'].str.replace('.', ' ', regex=False)
+#         if 'start date' in data.columns:
+#             data['start date'] = data['start date'].str.replace('/', '-', regex=False)
+#         if 'end date' in data.columns:
+#             data['end date'] = data['end date'].str.replace('/', '-', regex=False)
+#         if 'tags' in data.columns:
+#             data['tags'] = data['tags'].str.replace('-', '', regex=False)
+#         if 'project' in data.columns:
+#             data['project'] = data['project'].str.replace('-', '', regex=False)
+#         if 'description' in data.columns and 'task' in data.columns:
+#             data['task'] = data.apply(
+#                 lambda row: row['description'] if pd.isna(row['task']) or row['task'] == '' else row['task'],
+#                 axis=1
+#             )   
+#         data.rename(columns={
+#             'start date': 'start date',
+#             'end date': 'end date',
+#             'duration (decimal)': 'duration'
+#         }, inplace=True)
+
+#         for col in ['start date', 'end date']:
+#             if col in data.columns:
+#                 data[col] = pd.to_datetime(data[col], format="%m-%d-%Y", errors='coerce')
+#         if 'duration' in data.columns:
+#             data['duration'] = pd.to_numeric(data['duration'], errors='coerce')
+#     return data
+import pandas as pd
+
 def load_data(channel_id):
     data = get_clockify_sheet(channel_id)
-    if not data.empty:
-    # Ensure all column names are strings first
-        data.columns = [str(col).lower() for col in data.columns]
-        data = data.applymap(lambda x: x.lower() if isinstance(x, str) else x)
-        if 'user' in data.columns:
-            data['user'] = data['user'].str.replace('.', ' ', regex=False)
-        if 'start date' in data.columns:
-            data['start date'] = data['start date'].str.replace('/', '-', regex=False)
-        if 'end date' in data.columns:
-            data['end date'] = data['end date'].str.replace('/', '-', regex=False)
-        if 'tags' in data.columns:
-            data['tags'] = data['tags'].str.replace('-', '', regex=False)
-        if 'project' in data.columns:
-            data['project'] = data['project'].str.replace('-', '', regex=False)
-        data['task'] = data.apply(lambda row: row['description'] if pd.isna(row['task']) or row['task'] == '' else row['task'], axis=1)
-        data.rename(columns={
-            'start date': 'start date',
-            'end date': 'end date',
-            'duration (decimal)': 'duration'
-        }, inplace=True)
+    
+    if data.empty:
+        return data 
 
-        for col in ['start date', 'end date']:
-            if col in data.columns:
-                data[col] = pd.to_datetime(data[col], format="%m-%d-%Y", errors='coerce')
-        if 'duration' in data.columns:
-            data['duration'] = pd.to_numeric(data['duration'], errors='coerce')
+    data.columns = [str(col).lower() for col in data.columns]
+
+    data = data.applymap(lambda x: x.lower() if isinstance(x, str) else x)
+
+    if 'user' in data.columns:
+        data['user'] = data['user'].str.replace('.', ' ', regex=False)
+    if 'start date' in data.columns:
+        data['start date'] = data['start date'].str.replace('/', '-', regex=False)
+    if 'end date' in data.columns:
+        data['end date'] = data['end date'].str.replace('/', '-', regex=False)
+    if 'tags' in data.columns:
+        data['tags'] = data['tags'].str.replace('-', '', regex=False)
+    if 'project' in data.columns:
+        data['project'] = data['project'].str.replace('-', '', regex=False)
+
+    if 'description' in data.columns and 'task' in data.columns:
+        data['task'] = data.apply(
+            lambda row: row['description'] if pd.isna(row['task']) or row['task'] == '' else row['task'],
+            axis=1
+        )
+    data.to_csv("clockify_full_report.csv", index=False)
+    data.rename(columns={
+        'duration (decimal)': 'duration'
+    }, inplace=True)
+
+    for col in ['start date', 'end date']:
+        if col in data.columns:
+            data[col] = pd.to_datetime(data[col], format="%m-%d-%Y", errors='coerce')
+
+    if 'duration' in data.columns:
+        data['duration'] = pd.to_numeric(data['duration'], errors='coerce')
+
     return data
+
 
 def clean_gpt_code(code: str) -> str:
     code = re.sub(r"```python", "", code, flags=re.IGNORECASE)
@@ -249,12 +303,12 @@ def clean_gpt_code(code: str) -> str:
     code = code.strip()
     if "answer" not in code:
         code += "\nanswer = None"
-    return code.lower()
+    return code
 
 @app.event("message")
 def handle_message(message, say):
     user_text = message.get("text")
-    prompt = user_text
+    prompt = user_text.lower()
     channel_id = message.get("channel")
     data = load_data(channel_id)
 
