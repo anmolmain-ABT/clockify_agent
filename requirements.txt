@@ -1,0 +1,6 @@
+pandas==2.2.3
+openai==0.28.0
+requests
+slack-sdk
+slack-bolt
+python-dotenv
