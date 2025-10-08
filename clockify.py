@@ -11,6 +11,12 @@ from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 import time
 from dotenv import load_dotenv
+import streamlit as st
+
+st.title("Clockify Automation Dashboard")
+
+st.write("✅ The Clockify app is running successfully on Render!")
+
 
 load_dotenv()
 openai.api_type = os.getenv("openai_api_type")
