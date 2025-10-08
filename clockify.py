@@ -215,7 +215,6 @@ def summarizer(table, user_query):
             The answer is provided by LLM was : {table}. 
             if this response can be represented in table, return table starting and ending with ``` adjust the table width accordingly for symmetry in column widths. otherwise return simple string
             Do not add unnecessary details. 
-            - In the end always carefully create a toal summary about the data like total duration or description of data,if data is greeting simply do not write greeting message, do not mention it as a summary.
             """}
         ]
     )
