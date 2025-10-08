@@ -182,8 +182,8 @@ def gpt_response(input_str, table):
             - Always store the final output in a variable called 'answer'.
             - Do not use any ascending or descending order in code
             - If user asks for query related to last week always look for last week from Sunday to Saturday from current date.
-            - If user asks for query related to last Month always look for last Month from Currnet Month, also include first day and last day of month, while calculation.
-            - If user asks for query related to last Qaurter always find the last quarter months acccording to indian financial year system and create query according to these months,also include first day and last day of month, while calculation.
+            - If user asks for query related to last Month always look for last Month from Currnet Month, must search by first calculating the dates and then applying query, but not time only date.
+            - If user asks for query related to last Qaurter always find the last quarter months acccording to indian financial year system and create query according to these months,must search by first calculating the dates and then applying query, but not time only date.
             - Do all date computions in MM-DD-YYYY format only.
             - If user ask to generate query based on task ,description user or project name, always use contains keyword never look for exact match.
             Input:
