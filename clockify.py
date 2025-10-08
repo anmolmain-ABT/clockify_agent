@@ -11,8 +11,6 @@ from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 import time
 from dotenv import load_dotenv
-from flask import Flask
-import threading
 
 load_dotenv()
 openai.api_type = os.getenv("openai_api_type")
@@ -401,19 +399,6 @@ def handle_message(message, say):
                     send_message_slack(channel_id, user_text, error_message)
                     raise
 
-
-app_flask = Flask(__name__)
-
-@app_flask.route("/")
-def home():
-    return "Bot is running!"
-
-def start_slack_bot():
-    handler = SocketModeHandler(app, os.getenv("SLACK_APP_TOKEN"))
-    handler.start()
-
 if __name__ == "__main__":
-    threading.Thread(target=start_slack_bot).start()
-    # Bind to Azure port
-    port = int(os.environ.get("PORT", 8080))
-    app_flask.run(host="0.0.0.0", port=port)
+    handler = SocketModeHandler(app, SLACK_APP_TOKEN)
+    handler.start()
