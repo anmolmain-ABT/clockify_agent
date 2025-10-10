@@ -198,7 +198,7 @@ def gpt_response(input_str, table):
             Query: {input_str}
             Output:
             Generate python pandas code to answer this question using 'df' as the dataframe.
-            Return code that computes the answer and stores it in a variable named 'answer'
+            Return code that computes the answer and stores it in a variable named 'answer'.
              """}
         ]
     )
