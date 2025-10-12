@@ -403,6 +403,7 @@ def clean_gpt_code(code: str) -> str:
     code = code.strip()
     if "answer" not in code:
         code += "\nanswer = None"
+        
     return code
 
 @app.event("message")
