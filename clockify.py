@@ -39,6 +39,107 @@ def send_message_slack(channel, user_input, output):
     message = f"*Query:* {user_input}\n*Answer:* {output}"
     slack_client.chat_postMessage(channel=channel, text=message)
 
+def sudo_download_file_command(channel_id):
+    today = date.today()
+
+    file_name = "clockify_full_report.csv"
+    processing_message = app.client.chat_postMessage(
+        channel=channel_id,
+        text="💭 Processing your request... please wait."
+    )
+    app.client.chat_update(
+        channel=channel_id,
+        ts=processing_message["ts"],
+        text="Please wait while data is being downloaded from Clockify. This may take a couple of minutes."
+    )
+
+    start_date = (today - timedelta(days=120)).isoformat() + "T00:00:00Z"
+    end_date = today.isoformat() + "T23:59:59Z"
+
+    url = f"https://reports.api.clockify.me/v1/workspaces/{WORKSPACE_ID}/reports/detailed"
+    headers = {
+        "X-Api-Key": API_KEY,
+        "Content-Type": "application/json"
+    }
+
+    all_entries = []
+    page = 1
+    page_size = 100
+
+    while True:
+        payload = {
+            "dateRangeStart": start_date,
+            "dateRangeEnd": end_date,
+            "sortOrder": "DESCENDING",
+            "exportType": "JSON",
+            "amountShown": "HIDE_AMOUNT",
+            "detailedFilter": {
+                "options": {"totals": "CALCULATE"},
+                "page": page,
+                "pageSize": page_size,
+                "sortColumn": "ID"
+            }
+        }
+
+        try:
+            response = requests.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            print(f"HTTP error: {e}")
+            print(f"Response content: {response.text}")
+            break
+        except requests.exceptions.RequestException as e:
+            print(f"Request error: {e}")
+            break
+
+        data = response.json()
+        entries = data.get("timeentries", data.get("timeEntries", []))
+        if not entries:
+            break
+
+        all_entries.extend(entries)
+        print(f"Page {page} fetched, {len(entries)} entries")
+        page += 1
+
+    if not all_entries:
+        print("No data found.")
+        return pd.DataFrame()
+
+    formatted_rows = []
+    for e in all_entries:
+        start_iso = e['timeInterval']['start']
+        end_iso = e['timeInterval']['end']
+
+        start_date_str = datetime.fromisoformat(start_iso.rstrip('Z')).strftime("%m/%d/%Y") if start_iso else ""
+        end_date_str = datetime.fromisoformat(end_iso.rstrip('Z')).strftime("%m/%d/%Y") if end_iso else ""
+
+        if start_iso and end_iso:
+            start_dt = datetime.fromisoformat(start_iso.rstrip('Z'))
+            end_dt = datetime.fromisoformat(end_iso.rstrip('Z'))
+            duration_hours = (end_dt - start_dt).total_seconds() / 3600
+        else:
+            duration_hours = 0
+
+        tag_names = [tag['name'] for tag in e.get("tags", []) if 'name' in tag]
+
+        formatted_rows.append({
+            "Project": e.get("projectName", ""),
+            "Client": e.get("clientName", ""),
+            "Description": e.get("description", ""),
+            "Task": e.get("taskName", ""),
+            "User": e.get("userName", ""),
+            "Tags": ", ".join(tag_names),
+            "Start Date": start_date_str,
+            "End Date": end_date_str,
+            "Duration (decimal)": round(duration_hours, 2)
+        })
+
+    df = pd.DataFrame(formatted_rows)
+    df.to_csv(file_name, index=False)
+    print(f"All data saved to {file_name} ({len(df)} rows)")
+    return df
+
+
 def get_clockify_sheet(channel_id):
     file_name = "clockify_full_report.csv"
     today = date.today()
@@ -309,8 +410,12 @@ def handle_message(message, say):
     user_text = message.get("text")
     prompt = user_text.lower()
     channel_id = message.get("channel")
-    data = load_data(channel_id)
+    if user_text == "sudo downloadfiledatatilltoday":
+        print("Downloading files")
+        sudo_download_file_command(channel_id)
+        user_text = ""
 
+    data = load_data(channel_id)
     if data is not None:
         print("✅ File read successfully!")
         
