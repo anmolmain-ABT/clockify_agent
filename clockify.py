@@ -411,7 +411,6 @@ def clean_gpt_code(code: str) -> str:
         
     return code
 
-
 @app.event("message")
 def handle_message(message, say):
     user_text = message.get("text")
