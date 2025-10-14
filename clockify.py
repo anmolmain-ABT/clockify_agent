@@ -340,6 +340,7 @@ def handle_message(message, say):
                     text=f"❌ Failed to process your request: {e}"
                 )
 
+
 # --------------------- Run Slack Bot ---------------------
 if __name__ == "__main__":
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
