@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import logging
+
 # --------------------- Load environment variables ---------------------
 load_dotenv()
 
