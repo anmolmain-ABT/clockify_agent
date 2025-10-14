@@ -16,11 +16,7 @@ import streamlit as st
 st.title("Clockify Automation Dashboard")
 
 st.write("✅ The Clockify app is running successfully on Render!")
-
-def split_message(text, max_len=60000):
-    """Split long Slack messages into smaller chunks."""
-    return [text[i:i + max_len] for i in range(0, len(text), max_len)]
-
+cached_df = None
 load_dotenv()
 openai.api_type = os.getenv("openai_api_type")
 openai.api_version = os.getenv("openai_api_version")
@@ -35,6 +31,7 @@ WORKSPACE_ID = os.getenv("CLOCKIFY_WORKSPACE_ID")
 
 slack_client = WebClient(token=SLACK_BOT_TOKEN)
 app = App(token=SLACK_BOT_TOKEN)
+
 
 print("Fetching data from Clockify")
 
@@ -360,9 +357,14 @@ def summarizer(table, user_query):
 import pandas as pd
 
 def load_data(channel_id):
+    global cached_df
+    if cached_df is not None:
+        return cached_df
+
     data = get_clockify_sheet(channel_id)
     
     if data.empty:
+        cached_df = data
         return data 
 
     data.columns = [str(col).lower() for col in data.columns]
@@ -414,7 +416,6 @@ def handle_message(message, say):
     user_text = message.get("text")
     prompt = user_text.lower()
     channel_id = message.get("channel")
-
     if user_text == "sudo downloadfiledatatilltoday":
         print("Downloading files")
         sudo_download_file_command(channel_id)
@@ -423,7 +424,7 @@ def handle_message(message, say):
     data = load_data(channel_id)
     if data is not None:
         print("✅ File read successfully!")
-
+        
         schema_info = "Table: Clockify\nColumns:\n"
         for col, dtype in zip(data.columns, data.dtypes):
             schema_info += f"- {col} ({dtype})\n"
@@ -467,56 +468,48 @@ def handle_message(message, say):
                     table_str = str(answer)
 
                 summarized = summarizer(table_str, prompt)
-                summarized = summarized.capitalize()
-                print(summarized)
+                print(summarized.capitalize())
 
-                # ✅ Paginate long outputs
-                chunks = split_message(summarized)
-                if len(chunks) == 1:
-                    app.client.chat_update(
-                        channel=channel_id,
-                        ts=processing_message["ts"],
-                        text=chunks[0]
-                    )
-                else:
-                    # Update first message
-                    app.client.chat_update(
-                        channel=channel_id,
-                        ts=processing_message["ts"],
-                        text=chunks[0]
-                    )
-                    # Post remaining chunks as follow-up messages
-                    for chunk in chunks[1:]:
-                        app.client.chat_postMessage(channel=channel_id, text=chunk)
+                # ✅ Update the message instead of sending a new one
+                app.client.chat_update(
+                    channel=channel_id,
+                    ts=processing_message["ts"],
+                    text=f"{summarized.capitalize()}"
+                )
 
+                # (Optional) If you want to send a separate message too
+                # send_message_slack(channel_id, user_text, summarized)
                 break
 
             except Exception as e:
                 print(f"⚠️ Attempt {attempt} failed: {e}")
-                print("Failed code:", raw_code)
-
+                print("Failed code:",raw_code)
+                
                 if attempt < retries:
-                    if attempt > 2:
+                    if attempt>2:
                         app.client.chat_update(
-                            channel=channel_id,
-                            ts=processing_message["ts"],
-                            text=f"💭 Seems a complex query, taking a bit longer to compute..."
+                        channel=channel_id,
+                        ts=processing_message["ts"],
+                        text=f"💭 Seems a complex query, taking a bit longer to compute..."
                         )
                     else:
                         app.client.chat_update(
-                            channel=channel_id,
-                            ts=processing_message["ts"],
-                            text=f"💭 Processing your request... please wait."
+                        channel=channel_id,
+                        ts=processing_message["ts"],
+                        text=f"💭 Processing your request... please wait."
                         )
                     print(f"⏳ Retrying in {delay} seconds...")
                     time.sleep(delay)
                 else:
                     error_message = f"❌ Unable to connect to Server, Please re-submit the query"
+                    
+                    # ❌ Update message to show error
                     app.client.chat_update(
                         channel=channel_id,
                         ts=processing_message["ts"],
                         text=error_message
                     )
+                    
                     send_message_slack(channel_id, user_text, error_message)
                     raise
 
