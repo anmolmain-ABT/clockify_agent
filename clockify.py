@@ -2,22 +2,19 @@ import pandas as pd
 import re
 import os
 import openai
-from datetime import date
-from datetime import date, timedelta
-import requests
 from datetime import date, timedelta, datetime
+import requests
 from slack_sdk import WebClient
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 import time
 from dotenv import load_dotenv
-import streamlit as st
-
-st.title("Clockify Automation Dashboard")
-
-st.write("✅ The Clockify app is running successfully on Render!")
-cached_df = None
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+import logging
+# --------------------- Load environment variables ---------------------
 load_dotenv()
+
 openai.api_type = os.getenv("openai_api_type")
 openai.api_version = os.getenv("openai_api_version")
 openai.api_base = os.getenv("openai_api_base")
@@ -25,42 +22,57 @@ openai.api_key = os.getenv("openai_api_key")
 
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
 SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")
-
 API_KEY = os.getenv("CLOCKIFY_API_KEY")
 WORKSPACE_ID = os.getenv("CLOCKIFY_WORKSPACE_ID")
+GOOGLE_SHEET_NAME = os.getenv("GOOGLE_SHEET_NAME")
+GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE")
+GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 
 slack_client = WebClient(token=SLACK_BOT_TOKEN)
 app = App(token=SLACK_BOT_TOKEN)
+cached_df = None
+
+# --------------------- Google Sheets ---------------------
+def get_gsheet_client():
+    if GOOGLE_CREDENTIALS_FILE is None:
+        raise ValueError("GOOGLE_CREDENTIALS_FILE path is not set in .env")
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive.file",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDENTIALS_FILE, scope)
+    client = gspread.authorize(creds)
+    return client
+
+def write_to_sheet(df):
+    client = get_gsheet_client()
+    sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
+    
+    # Convert datetime columns to string in MM/DD/YYYY format
+    df_to_write = df.copy()
+    for col in df_to_write.select_dtypes(include=['datetime', 'datetime64[ns]']):
+        df_to_write[col] = df_to_write[col].dt.strftime("%m/%d/%Y")
+
+    sheet.clear()
+    sheet.update([df_to_write.columns.values.tolist()] + df_to_write.values.tolist())
 
 
-print("Fetching data from Clockify")
+def read_from_sheet():
+    client = get_gsheet_client()
+    sheet = client.open(GOOGLE_SHEET_NAME).sheet1
+    data = sheet.get_all_records()
+    return pd.DataFrame(data)
 
-def send_message_slack(channel, user_input, output):
-    message = f"*Query:* {user_input}\n*Answer:* {output}"
-    slack_client.chat_postMessage(channel=channel, text=message)
-
-def sudo_download_file_command(channel_id):
+# --------------------- Clockify Download ---------------------
+def download_clockify_data(since_date=None):
     today = date.today()
-
-    file_name = "clockify_full_report.csv"
-    processing_message = app.client.chat_postMessage(
-        channel=channel_id,
-        text="💭 Processing your request... please wait."
-    )
-    app.client.chat_update(
-        channel=channel_id,
-        ts=processing_message["ts"],
-        text="Please wait while data is being downloaded from Clockify. This may take a couple of minutes."
-    )
-
-    start_date = (today - timedelta(days=120)).isoformat() + "T00:00:00Z"
+    start_date = (since_date.isoformat() + "T00:00:00Z") if since_date else ((today - timedelta(days=120)).isoformat() + "T00:00:00Z")
     end_date = today.isoformat() + "T23:59:59Z"
 
     url = f"https://reports.api.clockify.me/v1/workspaces/{WORKSPACE_ID}/reports/detailed"
-    headers = {
-        "X-Api-Key": API_KEY,
-        "Content-Type": "application/json"
-    }
+    headers = {"X-Api-Key": API_KEY, "Content-Type": "application/json"}
 
     all_entries = []
     page = 1
@@ -80,48 +92,26 @@ def sudo_download_file_command(channel_id):
                 "sortColumn": "ID"
             }
         }
-
-        try:
-            response = requests.post(url, json=payload, headers=headers)
-            response.raise_for_status()
-        except requests.exceptions.HTTPError as e:
-            print(f"HTTP error: {e}")
-            print(f"Response content: {response.text}")
-            break
-        except requests.exceptions.RequestException as e:
-            print(f"Request error: {e}")
-            break
-
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
         data = response.json()
         entries = data.get("timeentries", data.get("timeEntries", []))
         if not entries:
             break
-
         all_entries.extend(entries)
-        print(f"Page {page} fetched, {len(entries)} entries")
         page += 1
 
     if not all_entries:
-        print("No data found.")
         return pd.DataFrame()
 
     formatted_rows = []
     for e in all_entries:
         start_iso = e['timeInterval']['start']
         end_iso = e['timeInterval']['end']
-
         start_date_str = datetime.fromisoformat(start_iso.rstrip('Z')).strftime("%m/%d/%Y") if start_iso else ""
         end_date_str = datetime.fromisoformat(end_iso.rstrip('Z')).strftime("%m/%d/%Y") if end_iso else ""
-
-        if start_iso and end_iso:
-            start_dt = datetime.fromisoformat(start_iso.rstrip('Z'))
-            end_dt = datetime.fromisoformat(end_iso.rstrip('Z'))
-            duration_hours = (end_dt - start_dt).total_seconds() / 3600
-        else:
-            duration_hours = 0
-
+        duration_hours = (datetime.fromisoformat(end_iso.rstrip('Z')) - datetime.fromisoformat(start_iso.rstrip('Z'))).total_seconds()/3600 if start_iso and end_iso else 0
         tag_names = [tag['name'] for tag in e.get("tags", []) if 'name' in tag]
-
         formatted_rows.append({
             "Project": e.get("projectName", ""),
             "Client": e.get("clientName", ""),
@@ -131,129 +121,59 @@ def sudo_download_file_command(channel_id):
             "Tags": ", ".join(tag_names),
             "Start Date": start_date_str,
             "End Date": end_date_str,
-            "Duration (decimal)": round(duration_hours, 2)
+            "Duration": round(duration_hours, 2)
         })
 
-    df = pd.DataFrame(formatted_rows)
-    df.to_csv(file_name, index=False)
-    print(f"All data saved to {file_name} ({len(df)} rows)")
-    return df
+    return pd.DataFrame(formatted_rows)
 
+# --------------------- Load & Cache Data ---------------------
+def load_data(channel_id=None):
+    global cached_df
+    if cached_df is not None:
+        return cached_df
 
-def get_clockify_sheet(channel_id):
-    file_name = "clockify_full_report.csv"
-    today = date.today()
-
-    # If file exists, read it
-    if os.path.exists(file_name):
-        print(f"{file_name} exists. Reading from file.")
-        df = pd.read_csv(file_name)
-        return df
-
-    # Only download on Saturday
-    if today.weekday() != 2:  # Not Saturday
-        print("Clockify data can only be downloaded on Saturday. Returning empty DataFrame.")
-        return pd.DataFrame()
-
-    # Saturday: proceed to download
-    processing_message = app.client.chat_postMessage(
-        channel=channel_id,
-        text="💭 Processing your request... please wait."
-    )
-    app.client.chat_update(
-        channel=channel_id,
-        ts=processing_message["ts"],
-        text="Please wait while data is being downloaded from Clockify. This may take a couple of minutes."
-    )
-
-    start_date = (today - timedelta(days=120)).isoformat() + "T00:00:00Z"
-    end_date = today.isoformat() + "T23:59:59Z"
-
-    url = f"https://reports.api.clockify.me/v1/workspaces/{WORKSPACE_ID}/reports/detailed"
-    headers = {
-        "X-Api-Key": API_KEY,
-        "Content-Type": "application/json"
-    }
-
-    all_entries = []
-    page = 1
-    page_size = 100
-
-    while True:
-        payload = {
-            "dateRangeStart": start_date,
-            "dateRangeEnd": end_date,
-            "sortOrder": "DESCENDING",
-            "exportType": "JSON",
-            "amountShown": "HIDE_AMOUNT",
-            "detailedFilter": {
-                "options": {"totals": "CALCULATE"},
-                "page": page,
-                "pageSize": page_size,
-                "sortColumn": "ID"
-            }
-        }
-
+    # Send Slack message if channel_id is provided
+    if channel_id:
         try:
-            response = requests.post(url, json=payload, headers=headers)
-            response.raise_for_status()
-        except requests.exceptions.HTTPError as e:
-            print(f"HTTP error: {e}")
-            print(f"Response content: {response.text}")
-            break
-        except requests.exceptions.RequestException as e:
-            print(f"Request error: {e}")
-            break
+            app.client.chat_postMessage(
+                channel=channel_id,
+                text="💾 Fetching and preparing Clockify data, please wait..."
+            )
+        except Exception as e:
+            logging.warning(f"Failed to send Slack message: {e}")
 
-        data = response.json()
-        entries = data.get("timeentries", data.get("timeEntries", []))
-        if not entries:
-            break
+    logging.info("Preloading Clockify data...")
 
-        all_entries.extend(entries)
-        print(f"Page {page} fetched, {len(entries)} entries")
-        page += 1
-
-    if not all_entries:
-        print("No data found.")
-        return pd.DataFrame()
-
-    formatted_rows = []
-    for e in all_entries:
-        start_iso = e['timeInterval']['start']
-        end_iso = e['timeInterval']['end']
-
-        start_date_str = datetime.fromisoformat(start_iso.rstrip('Z')).strftime("%m/%d/%Y") if start_iso else ""
-        end_date_str = datetime.fromisoformat(end_iso.rstrip('Z')).strftime("%m/%d/%Y") if end_iso else ""
-
-        if start_iso and end_iso:
-            start_dt = datetime.fromisoformat(start_iso.rstrip('Z'))
-            end_dt = datetime.fromisoformat(end_iso.rstrip('Z'))
-            duration_hours = (end_dt - start_dt).total_seconds() / 3600
+    try:
+        df_existing = read_from_sheet()
+        if df_existing.empty:
+            df_combined = download_clockify_data()
         else:
-            duration_hours = 0
+            df_existing['end date'] = pd.to_datetime(df_existing['end date'], format="%m/%d/%Y", errors='coerce')
+            last_date = df_existing['end date'].max()
+            df_new = download_clockify_data(since_date=last_date + timedelta(days=1))
+            df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+    except Exception:
+        df_combined = download_clockify_data()
 
-        tag_names = [tag['name'] for tag in e.get("tags", []) if 'name' in tag]
+    df_combined.columns = [str(col).lower() for col in df_combined.columns]
+    str_cols = df_combined.select_dtypes(include=['object']).columns
+    df_combined[str_cols] = df_combined[str_cols].apply(lambda x: x.str.lower())
+    if 'user' in df_combined.columns:
+        df_combined['user'] = df_combined['user'].str.replace('.', ' ', regex=False)
+    for col in ['start date', 'end date']:
+        if col in df_combined.columns:
+            df_combined[col] = pd.to_datetime(df_combined[col], format="%m/%d/%Y", errors='coerce')
+    if 'duration' in df_combined.columns:
+        df_combined['duration'] = pd.to_numeric(df_combined['duration'], errors='coerce')
 
-        formatted_rows.append({
-            "Project": e.get("projectName", ""),
-            "Client": e.get("clientName", ""),
-            "Description": e.get("description", ""),
-            "Task": e.get("taskName", ""),
-            "User": e.get("userName", ""),
-            "Tags": ", ".join(tag_names),
-            "Start Date": start_date_str,
-            "End Date": end_date_str,
-            "Duration (decimal)": round(duration_hours, 2)
-        })
+    write_to_sheet(df_combined)
+    cached_df = df_combined
+    return df_combined
 
-    df = pd.DataFrame(formatted_rows)
-    df.to_csv(file_name, index=False)
-    print(f"All data saved to {file_name} ({len(df)} rows)")
-    return df
-
-def gpt_response(input_str, table):
-    # print(input_str)
+# --------------------- GPT Query Handling ---------------------
+def gpt_response(input_str):
+    # logging.info(input_str)
     response = openai.ChatCompletion.create(
         engine="gpt-4o",
         messages= [
@@ -304,7 +224,6 @@ def gpt_response(input_str, table):
         ]
     )
     return response.choices[0].message.content
-
 def summarizer(table, user_query):
     response = openai.ChatCompletion.create(
         engine="gpt-4o-mini",
@@ -321,198 +240,107 @@ def summarizer(table, user_query):
     )
     return response.choices[0].message.content
 
-# def load_data(channel_id): 
-#     data = get_clockify_sheet(channel_id)
-#     if not data.empty:
-#     # Ensure all column names are strings first
-#         data.columns = [str(col).lower() for col in data.columns]
-#         data = data.applymap(lambda x: x.lower() if isinstance(x, str) else x)
-#         if 'user' in data.columns:
-#             data['user'] = data['user'].str.replace('.', ' ', regex=False)
-#         if 'start date' in data.columns:
-#             data['start date'] = data['start date'].str.replace('/', '-', regex=False)
-#         if 'end date' in data.columns:
-#             data['end date'] = data['end date'].str.replace('/', '-', regex=False)
-#         if 'tags' in data.columns:
-#             data['tags'] = data['tags'].str.replace('-', '', regex=False)
-#         if 'project' in data.columns:
-#             data['project'] = data['project'].str.replace('-', '', regex=False)
-#         if 'description' in data.columns and 'task' in data.columns:
-#             data['task'] = data.apply(
-#                 lambda row: row['description'] if pd.isna(row['task']) or row['task'] == '' else row['task'],
-#                 axis=1
-#             )   
-#         data.rename(columns={
-#             'start date': 'start date',
-#             'end date': 'end date',
-#             'duration (decimal)': 'duration'
-#         }, inplace=True)
-
-#         for col in ['start date', 'end date']:
-#             if col in data.columns:
-#                 data[col] = pd.to_datetime(data[col], format="%m-%d-%Y", errors='coerce')
-#         if 'duration' in data.columns:
-#             data['duration'] = pd.to_numeric(data['duration'], errors='coerce')
-#     return data
-import pandas as pd
-
-def load_data(channel_id):
-    global cached_df
-    if cached_df is not None:
-        return cached_df
-
-    data = get_clockify_sheet(channel_id)
-    
-    if data.empty:
-        cached_df = data
-        return data 
-
-    data.columns = [str(col).lower() for col in data.columns]
-
-    data = data.applymap(lambda x: x.lower() if isinstance(x, str) else x)
-
-    if 'user' in data.columns:
-        data['user'] = data['user'].str.replace('.', ' ', regex=False)
-    if 'start date' in data.columns:
-        data['start date'] = data['start date'].str.replace('/', '-', regex=False)
-    if 'end date' in data.columns:
-        data['end date'] = data['end date'].str.replace('/', '-', regex=False)
-    if 'tags' in data.columns:
-        data['tags'] = data['tags'].str.replace('-', '', regex=False)
-    if 'project' in data.columns:
-        data['project'] = data['project'].str.replace('-', '', regex=False)
-
-    if 'description' in data.columns and 'task' in data.columns:
-        data['task'] = data.apply(
-            lambda row: row['description'] if pd.isna(row['task']) or row['task'] == '' else row['task'],
-            axis=1
-        )
-    data.to_csv("clockify_full_report.csv", index=False)
-    data.rename(columns={
-        'duration (decimal)': 'duration'
-    }, inplace=True)
-
-    for col in ['start date', 'end date']:
-        if col in data.columns:
-            data[col] = pd.to_datetime(data[col], format="%m-%d-%Y", errors='coerce')
-
-    if 'duration' in data.columns:
-        data['duration'] = pd.to_numeric(data['duration'], errors='coerce')
-
-    return data
-
-
 def clean_gpt_code(code: str) -> str:
-    code = re.sub(r"```python", "", code, flags=re.IGNORECASE)
-    code = re.sub(r"```", "", code, flags=re.IGNORECASE)
-    code = code.strip()
+    # Remove backticks, python code fences, and trailing/leading whitespace
+    code = re.sub(r"```python|```", "", code, flags=re.IGNORECASE).strip()
+    # Remove any non-Python characters that sometimes appear
+    code = re.sub(r"^\s*<.*?>\s*$", "", code, flags=re.MULTILINE)
+    print(code)
+    logging.info(code)
+    # Ensure 'answer' variable exists
     if "answer" not in code:
         code += "\nanswer = None"
-        
     return code
 
+def sudo_download_file_command(channel_id):
+    logging.info("Forced data refresh initiated by sudo command...")
+    try:
+        # Force download Clockify data from scratch
+        df_fresh = download_clockify_data(since_date=None)  # Download all data
+        df_fresh.columns = [str(col).lower() for col in df_fresh.columns]
+        write_to_sheet(df_fresh)
+        global cached_df
+        cached_df = df_fresh  # Update cache
+        logging.info("Forced data refresh completed successfully.")
+        app.client.chat_postMessage(
+            channel=channel_id,
+            text="✅ All Clockify data has been downloaded and sheet is updated successfully!"
+        )
+    except Exception as e:
+        logging.error(f"Error during forced data refresh: {e}")
+        app.client.chat_postMessage(
+            channel=channel_id,
+            text=f"❌ Failed to refresh data: {e}"
+        )
+
+
+
+
+# --------------------- Slack Bot ---------------------
 @app.event("message")
 def handle_message(message, say):
     user_text = message.get("text")
+    if not user_text:
+        logging.warning("Empty message received. Ignoring.")
+        return
+
     prompt = user_text.lower()
     channel_id = message.get("channel")
-    if user_text == "sudo downloadfiledatatilltoday":
-        print("Downloading files")
+
+    # ---------------- Force refresh command ----------------
+    if user_text.strip().lower() == "sudo downloadfiledatatilltoday":
+        logging.info("Received sudo command to force data refresh.")
         sudo_download_file_command(channel_id)
-        user_text = ""
+        return 
+    data = load_data()
 
-    data = load_data(channel_id)
-    if data is not None:
-        print("✅ File read successfully!")
-        
-        schema_info = "Table: Clockify\nColumns:\n"
-        for col, dtype in zip(data.columns, data.dtypes):
-            schema_info += f"- {col} ({dtype})\n"
+    processing_message = app.client.chat_postMessage(
+        channel=channel_id,
+        text="💭 Processing your request... please wait."
+    )
 
-        query_prompt = f"""
-        Table Schema:
-        {schema_info}
-        
-        Question:
-        {prompt}
-        """
-
-        retries = 10
-        delay = 2
-
-        # ✅ Send initial "processing" message
-        processing_message = app.client.chat_postMessage(
-            channel=channel_id,
-            text="💭 Processing your request... please wait."
-        )
-
-        for attempt in range(1, retries + 1):
+    retries = 5
+    delay = 2
+    for attempt in range(1, retries + 1):
+        try:
+            raw_code = gpt_response(user_text)
+            pandas_code = clean_gpt_code(raw_code)
+            local_vars = {"df": data}
             try:
-                print(f"🔁 Attempt {attempt} of {retries}")
-                raw_code = gpt_response(query_prompt, [])
-                print(raw_code)
-
-                pandas_code = clean_gpt_code(raw_code)
-                local_vars = {"df": data}
-
                 exec(pandas_code, {}, local_vars)
-                answer = local_vars.get("answer", "No answer returned.")
+            except SyntaxError as e:
+                logging.info("❌ SyntaxError in GPT-generated code:")
+                logging.info(pandas_code)
+                raise e
+            answer = local_vars.get("answer", "No answer returned.")
 
-                if isinstance(answer, pd.DataFrame):
-                    print(answer)
-                    table_str = answer.to_string(index=False)
-                elif isinstance(answer, pd.Series):
-                    print(answer.reset_index())
-                    table_str = str(answer.to_dict())
-                else:
-                    table_str = str(answer)
+            if isinstance(answer, pd.DataFrame):
+                result = answer.to_string(index=False)
+            elif isinstance(answer, pd.Series):
+                result = str(answer.to_dict())
+            else:
+                result = str(answer)
+            summarized = summarizer(result, prompt)
+            logging.info(summarized.capitalize())
 
-                summarized = summarizer(table_str, prompt)
-                print(summarized.capitalize())
+            app.client.chat_update(
+                channel=channel_id,
+                ts=processing_message["ts"],
+                text=f"{summarized}"
+            )
+            break
 
-                # ✅ Update the message instead of sending a new one
+        except Exception as e:
+            logging.info(f"Attempt {attempt} failed: {e}")
+            time.sleep(delay)
+            if attempt == retries:
                 app.client.chat_update(
                     channel=channel_id,
                     ts=processing_message["ts"],
-                    text=f"{summarized.capitalize()}"
+                    text=f"❌ Failed to process your request: {e}"
                 )
 
-                # (Optional) If you want to send a separate message too
-                # send_message_slack(channel_id, user_text, summarized)
-                break
-
-            except Exception as e:
-                print(f"⚠️ Attempt {attempt} failed: {e}")
-                print("Failed code:",raw_code)
-                
-                if attempt < retries:
-                    if attempt>2:
-                        app.client.chat_update(
-                        channel=channel_id,
-                        ts=processing_message["ts"],
-                        text=f"💭 Seems a complex query, taking a bit longer to compute..."
-                        )
-                    else:
-                        app.client.chat_update(
-                        channel=channel_id,
-                        ts=processing_message["ts"],
-                        text=f"💭 Processing your request... please wait."
-                        )
-                    print(f"⏳ Retrying in {delay} seconds...")
-                    time.sleep(delay)
-                else:
-                    error_message = f"❌ Unable to connect to Server, Please re-submit the query"
-                    
-                    # ❌ Update message to show error
-                    app.client.chat_update(
-                        channel=channel_id,
-                        ts=processing_message["ts"],
-                        text=error_message
-                    )
-                    
-                    send_message_slack(channel_id, user_text, error_message)
-                    raise
-
+# --------------------- Run Slack Bot ---------------------
 if __name__ == "__main__":
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     handler.start()

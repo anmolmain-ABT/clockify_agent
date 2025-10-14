@@ -5,3 +5,5 @@ requests
 slack-sdk
 slack-bolt
 python-dotenv
+gspread
+oauth2client
