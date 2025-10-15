@@ -322,7 +322,7 @@ def sudo_download_file_command(channel_id):
 @app.event("message")
 def handle_message(message, say):
     user_text = message.get("text")
-    logging.info("Query : "+user_text)
+    logging.info(f"Query : {user_text}")
     if not user_text:
         logging.warning("Empty message received. Ignoring.")
         return
