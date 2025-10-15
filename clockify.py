@@ -12,6 +12,11 @@ from dotenv import load_dotenv
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import logging
+import threading
+import json
+from google.oauth2.service_account import Credentials
+
+
 # --------------------- Load environment variables ---------------------
 load_dotenv()
 
@@ -49,18 +54,24 @@ def keep_alive():
 
 # --------------------- Google Sheets ---------------------
 def get_gsheet_client():
-    if GOOGLE_CREDENTIALS_FILE is None:
-        raise ValueError("GOOGLE_CREDENTIALS_FILE path is not set in .env")
-    scope = [
+    # Load credentials from environment variable
+    google_creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    if not google_creds_json:
+        raise ValueError("GOOGLE_CREDENTIALS_JSON is not set in environment variables")
+
+    credentials_dict = json.loads(google_creds_json)
+
+    # Define scopes
+    scopes = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive.file",
         "https://www.googleapis.com/auth/drive"
     ]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDENTIALS_FILE, scope)
+
+    creds = Credentials.from_service_account_info(credentials_dict, scopes=scopes)
     client = gspread.authorize(creds)
     return client
-
 def write_to_sheet(df):
     client = get_gsheet_client()
     sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
@@ -372,5 +383,8 @@ def handle_message(message, say):
 
 # --------------------- Run Slack Bot ---------------------
 if __name__ == "__main__":
+    # Start keep-alive thread
+    threading.Thread(target=keep_alive, daemon=True).start()
+    
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     handler.connect()
