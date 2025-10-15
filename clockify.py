@@ -326,11 +326,12 @@ def sudo_download_file_command(channel_id):
 def handle_message(message, say):
     user_text = message.get("text")
     logging.info(f"Query : {user_text}")
+    print(f"Query : {user_text}")
     if not user_text:
         logging.warning("Empty message received. Ignoring.")
         return
 
-    prompt = user_text.lower()
+    prompt = str(user_text).lower()
     channel_id = message.get("channel")
 
     # ---------------- Force refresh command ----------------
