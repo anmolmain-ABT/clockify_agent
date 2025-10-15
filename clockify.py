@@ -158,12 +158,6 @@ def download_clockify_data(since_date=None):
 
 # --------------------- Load & Cache Data ---------------------
 def load_data(channel_id=None):
-    # app.client.chat_postMessage(
-    #         channel=channel_id,
-    #         text="Loading clockify sheet data"
-    #     )
-    logging.info("Loading clockify sheet data")
-    print("Loading clockify sheet data")
     global cached_df
     if cached_df is not None:
         return cached_df
@@ -175,46 +169,32 @@ def load_data(channel_id=None):
                 channel=channel_id,
                 text="💾 Fetching and preparing Clockify data, please wait..."
             )
-        except Exception as e:
-            logging.warning(f"Failed to send Slack message: {e}")
-
-    logging.info("Preloading Clockify data...")
-    print("Preloading Clockify data...")
+        except:
+            pass
 
     try:
         df_existing = read_from_sheet()
-        if df_existing.empty:
-            df_combined = download_clockify_data()
-        else:
+        df_existing.columns = [str(col).strip().lower() for col in df_existing.columns]
+        if 'end date' in df_existing.columns:
             df_existing['end date'] = pd.to_datetime(df_existing['end date'], format="%m/%d/%Y", errors='coerce')
-            last_date = df_existing['end date'].max()
-            df_new = download_clockify_data(since_date=last_date + timedelta(days=1))
-            df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-    except Exception:
-        df_combined = download_clockify_data()
-    logging.info(df_combined.head(5))
-    print(df_combined.head(5))
+        else:
+            df_existing['end date'] = pd.to_datetime('1900-01-01')
+
+        last_date = df_existing['end date'].max()
+        df_new = download_clockify_data(since_date=last_date + timedelta(days=1))
+        df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+    except Exception as e:
+        print("Error reading sheet or combining data:", e)
+        df_combined = download_clockify_data()  # fallback full fetch
+
     df_combined.columns = [str(col).lower() for col in df_combined.columns]
+    # Lowercase string columns
     str_cols = df_combined.select_dtypes(include=['object']).columns
     df_combined[str_cols] = df_combined[str_cols].apply(lambda x: x.apply(lambda y: y.lower() if isinstance(y, str) else y))
 
-    if 'user' in df_combined.columns:
-        df_combined['user'] = df_combined['user'].str.replace('.', ' ', regex=False)
-    for col in ['start date', 'end date']:
-        if col in df_combined.columns:
-            df_combined[col] = pd.to_datetime(df_combined[col], format="%m/%d/%Y", errors='coerce')
-    if 'duration' in df_combined.columns:
-        df_combined['duration'] = pd.to_numeric(df_combined['duration'], errors='coerce')
-    if 'description' in df_combined.columns and 'task' in df_combined.columns:
-        df_combined['task'] = df_combined.apply(
-        lambda row: row['description'] if pd.isna(row['task']) or row['task'] == '' else row['task'],
-        axis=1
-        )
-
-    write_to_sheet(df_combined)
     cached_df = df_combined
+    write_to_sheet(df_combined)
     return df_combined
-
 
 # --------------------- GPT Query Handling ---------------------
 def gpt_response(input_str):
