@@ -33,7 +33,6 @@ slack_client = WebClient(token=SLACK_BOT_TOKEN)
 app = App(token=SLACK_BOT_TOKEN)
 cached_df = None
 
-
 def keep_alive():
     url = os.getenv("RENDER_APP_URL")  # Add your Render URL in .env as RENDER_APP_URL
     if not url:
