@@ -399,4 +399,4 @@ def handle_message(message, say):
 # --------------------- Run Slack Bot ---------------------
 if __name__ == "__main__":
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
-    handler.connect()
+    handler.start()
