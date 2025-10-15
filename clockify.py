@@ -186,13 +186,13 @@ def load_data(channel_id=None):
     # Standardize column names
     print("Standardize column names")
     logging.info("Standardize column names")
-    df_combined.columns = [str(col).lower() for col in df_combined.columns]
+    df_combined.columns = [str(col).casefold() for col in df_combined.columns]
 
     # Convert string columns to lowercase
     print("Convert string columns to lowercase")
     logging.info("Convert string columns to lowercase")
     str_cols = df_combined.select_dtypes(include=['object']).columns
-    df_combined[str_cols] = df_combined[str_cols].apply(lambda x: x.str.lower())
+    df_combined[str_cols] = df_combined[str_cols].apply(lambda x: x.str.casefold())
 
     # Clean user column
     if 'user' in df_combined.columns:
@@ -306,7 +306,7 @@ def sudo_download_file_command(channel_id):
     try:
         # Force download Clockify data from scratch
         df_fresh = download_clockify_data(since_date=None)  # Download all data
-        df_fresh.columns = [str(col).lower() for col in df_fresh.columns]
+        df_fresh.columns = [str(col).casefold() for col in df_fresh.columns]
         write_to_sheet(df_fresh)
         global cached_df
         cached_df = df_fresh  # Update cache
@@ -336,11 +336,11 @@ def handle_message(message, say):
         print("Empty message received. Ignoring.")
         return
 
-    prompt = str(user_text).lower()
+    prompt = str(user_text).casefold()
     channel_id = message.get("channel")
 
     # ---------------- Force refresh command ----------------
-    if user_text.strip().lower() == "sudo downloadfiledatatilltoday":
+    if user_text.strip().casefold() == "sudo downloadfiledatatilltoday":
         logging.info("Received sudo command to force data refresh.")
         sudo_download_file_command(channel_id)
         return 
