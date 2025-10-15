@@ -143,7 +143,7 @@ def load_data(channel_id=None):
         except Exception as e:
             logging.warning(f"Failed to send Slack message: {e}")
 
-    logging.info("Preloading Clockify data...")
+    print("Preloading Clockify data...")
 
     try:
         df_existing = read_from_sheet()
@@ -174,7 +174,7 @@ def load_data(channel_id=None):
 
 # --------------------- GPT Query Handling ---------------------
 def gpt_response(input_str):
-    # logging.info(input_str)
+    # print(input_str)
     response = openai.ChatCompletion.create(
         engine="gpt-4o",
         messages= [
@@ -247,14 +247,14 @@ def clean_gpt_code(code: str) -> str:
     # Remove any non-Python characters that sometimes appear
     code = re.sub(r"^\s*<.*?>\s*$", "", code, flags=re.MULTILINE)
     print(code)
-    logging.info(code)
+    print(code)
     # Ensure 'answer' variable exists
     if "answer" not in code:
         code += "\nanswer = None"
     return code
 
 def sudo_download_file_command(channel_id):
-    logging.info("Forced data refresh initiated by sudo command...")
+    print("Forced data refresh initiated by sudo command...")
     try:
         # Force download Clockify data from scratch
         df_fresh = download_clockify_data(since_date=None)  # Download all data
@@ -262,7 +262,7 @@ def sudo_download_file_command(channel_id):
         write_to_sheet(df_fresh)
         global cached_df
         cached_df = df_fresh  # Update cache
-        logging.info("Forced data refresh completed successfully.")
+        print("Forced data refresh completed successfully.")
         app.client.chat_postMessage(
             channel=channel_id,
             text="✅ All Clockify data has been downloaded and sheet is updated successfully!"
@@ -290,7 +290,7 @@ def handle_message(message, say):
 
     # ---------------- Force refresh command ----------------
     if user_text.strip().lower() == "sudo downloadfiledatatilltoday":
-        logging.info("Received sudo command to force data refresh.")
+        print("Received sudo command to force data refresh.")
         sudo_download_file_command(channel_id)
         return 
     data = load_data()
@@ -310,8 +310,8 @@ def handle_message(message, say):
             try:
                 exec(pandas_code, {}, local_vars)
             except SyntaxError as e:
-                logging.info("❌ SyntaxError in GPT-generated code:")
-                logging.info(pandas_code)
+                print("❌ SyntaxError in GPT-generated code:")
+                print(pandas_code)
                 raise e
             answer = local_vars.get("answer", "No answer returned.")
 
@@ -322,7 +322,7 @@ def handle_message(message, say):
             else:
                 result = str(answer)
             summarized = summarizer(result, prompt)
-            logging.info(summarized.capitalize())
+            print(summarized.capitalize())
 
             app.client.chat_update(
                 channel=channel_id,
@@ -332,7 +332,7 @@ def handle_message(message, say):
             break
 
         except Exception as e:
-            logging.info(f"Attempt {attempt} failed: {e}")
+            print(f"Attempt {attempt} failed: {e}")
             time.sleep(delay)
             if attempt == retries:
                 app.client.chat_update(
@@ -345,4 +345,5 @@ def handle_message(message, say):
 # --------------------- Run Slack Bot ---------------------
 if __name__ == "__main__":
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
-    handler.start()
+    handler.connect()
+
