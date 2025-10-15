@@ -391,7 +391,7 @@ def handle_message(message, say):
 # --------------------- Run Slack Bot ---------------------
 if __name__ == "__main__":
     # Start keep-alive thread
-    threading.Thread(target=keep_alive, daemon=True).start()
+    # threading.Thread(target=keep_alive, daemon=True).start()
     
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     handler.connect()
