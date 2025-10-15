@@ -15,7 +15,7 @@ import logging
 import threading
 import json
 from google.oauth2.service_account import Credentials
-
+import os
 
 # --------------------- Load environment variables ---------------------
 load_dotenv()
@@ -193,7 +193,8 @@ def load_data(channel_id=None):
 
     df_combined.columns = [str(col).lower() for col in df_combined.columns]
     str_cols = df_combined.select_dtypes(include=['object']).columns
-    df_combined[str_cols] = df_combined[str_cols].apply(lambda x: x.str.lower())
+    df_combined[str_cols] = df_combined[str_cols].apply(lambda x: x.apply(lambda y: y.lower() if isinstance(y, str) else y))
+
     if 'user' in df_combined.columns:
         df_combined['user'] = df_combined['user'].str.replace('.', ' ', regex=False)
     for col in ['start date', 'end date']:
