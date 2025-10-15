@@ -12,11 +12,6 @@ from dotenv import load_dotenv
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import logging
-import threading
-import json
-from google.oauth2.service_account import Credentials
-import os
-
 # --------------------- Load environment variables ---------------------
 load_dotenv()
 
@@ -54,24 +49,18 @@ def keep_alive():
 
 # --------------------- Google Sheets ---------------------
 def get_gsheet_client():
-    # Load credentials from environment variable
-    google_creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
-    if not google_creds_json:
-        raise ValueError("GOOGLE_CREDENTIALS_JSON is not set in environment variables")
-
-    credentials_dict = json.loads(google_creds_json)
-
-    # Define scopes
-    scopes = [
+    if GOOGLE_CREDENTIALS_FILE is None:
+        raise ValueError("GOOGLE_CREDENTIALS_FILE path is not set in .env")
+    scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive.file",
         "https://www.googleapis.com/auth/drive"
     ]
-
-    creds = Credentials.from_service_account_info(credentials_dict, scopes=scopes)
+    creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDENTIALS_FILE, scope)
     client = gspread.authorize(creds)
     return client
+
 def write_to_sheet(df):
     client = get_gsheet_client()
     sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
@@ -130,8 +119,6 @@ def download_clockify_data(since_date=None):
         page += 1
 
     if not all_entries:
-        print(pd.DataFrame())
-        logging.info(pd.DataFrame())
         return pd.DataFrame()
 
     formatted_rows = []
@@ -158,6 +145,8 @@ def download_clockify_data(since_date=None):
 
 # --------------------- Load & Cache Data ---------------------
 def load_data(channel_id=None):
+    logging.info("Loading clockify sheet data")
+    print("Loading clockify sheet data")
     global cached_df
     if cached_df is not None:
         return cached_df
@@ -169,32 +158,57 @@ def load_data(channel_id=None):
                 channel=channel_id,
                 text="💾 Fetching and preparing Clockify data, please wait..."
             )
-        except:
-            pass
+        except Exception as e:
+            logging.warning(f"Failed to send Slack message: {e}")
+
+    logging.info("Preloading Clockify data...")
+    print("Preloading Clockify data...")
 
     try:
         df_existing = read_from_sheet()
-        df_existing.columns = [str(col).strip().lower() for col in df_existing.columns]
-        if 'end date' in df_existing.columns:
-            df_existing['end date'] = pd.to_datetime(df_existing['end date'], format="%m/%d/%Y", errors='coerce')
+        if df_existing.empty:
+            df_combined = download_clockify_data()
         else:
-            df_existing['end date'] = pd.to_datetime('1900-01-01')
+            # Let pandas infer date format automatically
+            df_existing['end date'] = pd.to_datetime(df_existing['end date'], errors='coerce')
+            last_date = df_existing['end date'].max()
+            df_new = download_clockify_data(since_date=last_date + timedelta(days=1))
+            df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+    except Exception:
+        df_combined = download_clockify_data()
 
-        last_date = df_existing['end date'].max()
-        df_new = download_clockify_data(since_date=last_date + timedelta(days=1))
-        df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-    except Exception as e:
-        print("Error reading sheet or combining data:", e)
-        df_combined = download_clockify_data()  # fallback full fetch
-
+    # Standardize column names
     df_combined.columns = [str(col).lower() for col in df_combined.columns]
-    # Lowercase string columns
-    str_cols = df_combined.select_dtypes(include=['object']).columns
-    df_combined[str_cols] = df_combined[str_cols].apply(lambda x: x.apply(lambda y: y.lower() if isinstance(y, str) else y))
 
-    cached_df = df_combined
+    # Convert string columns to lowercase
+    str_cols = df_combined.select_dtypes(include=['object']).columns
+    df_combined[str_cols] = df_combined[str_cols].apply(lambda x: x.str.lower())
+
+    # Clean user column
+    if 'user' in df_combined.columns:
+        df_combined['user'] = df_combined['user'].str.replace('.', ' ', regex=False)
+
+    # Convert date columns robustly
+    for col in ['start date', 'end date']:
+        if col in df_combined.columns:
+            df_combined[col] = pd.to_datetime(df_combined[col], errors='coerce')
+
+    # Ensure duration is numeric
+    if 'duration' in df_combined.columns:
+        df_combined['duration'] = pd.to_numeric(df_combined['duration'], errors='coerce')
+
+    # Fill missing task with description
+    if 'description' in df_combined.columns and 'task' in df_combined.columns:
+        df_combined['task'] = df_combined.apply(
+            lambda row: row['description'] if pd.isna(row['task']) or row['task'] == '' else row['task'],
+            axis=1
+        )
+
+    # Write to sheet and update cache
     write_to_sheet(df_combined)
+    cached_df = df_combined
     return df_combined
+
 
 # --------------------- GPT Query Handling ---------------------
 def gpt_response(input_str):
@@ -305,13 +319,11 @@ def sudo_download_file_command(channel_id):
 @app.event("message")
 def handle_message(message, say):
     user_text = message.get("text")
-    logging.info(f"Query : {user_text}")
-    print(f"Query : {user_text}")
     if not user_text:
         logging.warning("Empty message received. Ignoring.")
         return
 
-    prompt = str(user_text).lower()
+    prompt = user_text.lower()
     channel_id = message.get("channel")
 
     # ---------------- Force refresh command ----------------
@@ -370,8 +382,5 @@ def handle_message(message, say):
 
 # --------------------- Run Slack Bot ---------------------
 if __name__ == "__main__":
-    # Start keep-alive thread
-    # threading.Thread(target=keep_alive, daemon=True).start()
-    
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     handler.connect()
