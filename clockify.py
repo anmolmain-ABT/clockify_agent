@@ -130,6 +130,8 @@ def download_clockify_data(since_date=None):
         page += 1
 
     if not all_entries:
+        print(pd.DataFrame())
+        logging.info(pd.DataFrame())
         return pd.DataFrame()
 
     formatted_rows = []
