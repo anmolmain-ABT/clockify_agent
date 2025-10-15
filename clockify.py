@@ -212,6 +212,7 @@ def load_data(channel_id=None):
     cached_df = df_combined
     return df_combined
 
+
 # --------------------- GPT Query Handling ---------------------
 def gpt_response(input_str):
     # logging.info(input_str)
