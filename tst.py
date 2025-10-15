@@ -49,7 +49,7 @@ def get_gsheet_client():
 def write_to_sheet(df):
     client = get_gsheet_client()
     sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
-    
+
     # Convert datetime columns to string in MM/DD/YYYY format
     df_to_write = df.copy()
     for col in df_to_write.select_dtypes(include=['datetime', 'datetime64[ns]']):
@@ -166,6 +166,11 @@ def load_data(channel_id=None):
             df_combined[col] = pd.to_datetime(df_combined[col], format="%m/%d/%Y", errors='coerce')
     if 'duration' in df_combined.columns:
         df_combined['duration'] = pd.to_numeric(df_combined['duration'], errors='coerce')
+    if 'description' in df_combined.columns and 'task' in df_combined.columns:
+        df_combined['task'] = df_combined.apply(
+        lambda row: row['description'] if pd.isna(row['task']) or row['task'] == '' else row['task'],
+        axis=1
+        )
 
     write_to_sheet(df_combined)
     cached_df = df_combined
@@ -339,6 +344,7 @@ def handle_message(message, say):
                     ts=processing_message["ts"],
                     text=f"❌ Failed to process your request: {e}"
                 )
+
 
 # --------------------- Run Slack Bot ---------------------
 if __name__ == "__main__":

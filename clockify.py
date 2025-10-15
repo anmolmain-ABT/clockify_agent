@@ -12,7 +12,6 @@ from dotenv import load_dotenv
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import logging
-
 # --------------------- Load environment variables ---------------------
 load_dotenv()
 
@@ -33,6 +32,21 @@ slack_client = WebClient(token=SLACK_BOT_TOKEN)
 app = App(token=SLACK_BOT_TOKEN)
 cached_df = None
 
+
+def keep_alive():
+    url = os.getenv("RENDER_APP_URL")  # Add your Render URL in .env as RENDER_APP_URL
+    if not url:
+        print("RENDER_APP_URL not set in .env")
+        return
+    while True:
+        try:
+            print(f"Pinging {url} to keep alive...")
+            requests.get(url, timeout=10)
+        except Exception as e:
+            print(f"Keep-alive ping failed: {e}")
+        time.sleep(30 * 60)  # Ping every 5 minutes
+        
+
 # --------------------- Google Sheets ---------------------
 def get_gsheet_client():
     if GOOGLE_CREDENTIALS_FILE is None:
@@ -50,7 +64,7 @@ def get_gsheet_client():
 def write_to_sheet(df):
     client = get_gsheet_client()
     sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
-    
+
     # Convert datetime columns to string in MM/DD/YYYY format
     df_to_write = df.copy()
     for col in df_to_write.select_dtypes(include=['datetime', 'datetime64[ns]']):
@@ -68,6 +82,8 @@ def read_from_sheet():
 
 # --------------------- Clockify Download ---------------------
 def download_clockify_data(since_date=None):
+    logging.info("Downloading clockify Sheet")
+    print("Downloading clockify Sheet")
     today = date.today()
     start_date = (since_date.isoformat() + "T00:00:00Z") if since_date else ((today - timedelta(days=120)).isoformat() + "T00:00:00Z")
     end_date = today.isoformat() + "T23:59:59Z"
@@ -129,6 +145,12 @@ def download_clockify_data(since_date=None):
 
 # --------------------- Load & Cache Data ---------------------
 def load_data(channel_id=None):
+    # app.client.chat_postMessage(
+    #         channel=channel_id,
+    #         text="Loading clockify sheet data"
+    #     )
+    logging.info("Loading clockify sheet data")
+    print("Loading clockify sheet data")
     global cached_df
     if cached_df is not None:
         return cached_df
@@ -143,6 +165,7 @@ def load_data(channel_id=None):
         except Exception as e:
             logging.warning(f"Failed to send Slack message: {e}")
 
+    logging.info("Preloading Clockify data...")
     print("Preloading Clockify data...")
 
     try:
@@ -167,6 +190,11 @@ def load_data(channel_id=None):
             df_combined[col] = pd.to_datetime(df_combined[col], format="%m/%d/%Y", errors='coerce')
     if 'duration' in df_combined.columns:
         df_combined['duration'] = pd.to_numeric(df_combined['duration'], errors='coerce')
+    if 'description' in df_combined.columns and 'task' in df_combined.columns:
+        df_combined['task'] = df_combined.apply(
+        lambda row: row['description'] if pd.isna(row['task']) or row['task'] == '' else row['task'],
+        axis=1
+        )
 
     write_to_sheet(df_combined)
     cached_df = df_combined
@@ -174,7 +202,7 @@ def load_data(channel_id=None):
 
 # --------------------- GPT Query Handling ---------------------
 def gpt_response(input_str):
-    # print(input_str)
+    # logging.info(input_str)
     response = openai.ChatCompletion.create(
         engine="gpt-4o",
         messages= [
@@ -247,14 +275,14 @@ def clean_gpt_code(code: str) -> str:
     # Remove any non-Python characters that sometimes appear
     code = re.sub(r"^\s*<.*?>\s*$", "", code, flags=re.MULTILINE)
     print(code)
-    print(code)
+    logging.info(code)
     # Ensure 'answer' variable exists
     if "answer" not in code:
         code += "\nanswer = None"
     return code
 
 def sudo_download_file_command(channel_id):
-    print("Forced data refresh initiated by sudo command...")
+    logging.info("Forced data refresh initiated by sudo command...")
     try:
         # Force download Clockify data from scratch
         df_fresh = download_clockify_data(since_date=None)  # Download all data
@@ -262,7 +290,7 @@ def sudo_download_file_command(channel_id):
         write_to_sheet(df_fresh)
         global cached_df
         cached_df = df_fresh  # Update cache
-        print("Forced data refresh completed successfully.")
+        logging.info("Forced data refresh completed successfully.")
         app.client.chat_postMessage(
             channel=channel_id,
             text="✅ All Clockify data has been downloaded and sheet is updated successfully!"
@@ -290,10 +318,10 @@ def handle_message(message, say):
 
     # ---------------- Force refresh command ----------------
     if user_text.strip().lower() == "sudo downloadfiledatatilltoday":
-        print("Received sudo command to force data refresh.")
+        logging.info("Received sudo command to force data refresh.")
         sudo_download_file_command(channel_id)
         return 
-    data = load_data()
+    data = load_data(channel_id)
 
     processing_message = app.client.chat_postMessage(
         channel=channel_id,
@@ -310,8 +338,8 @@ def handle_message(message, say):
             try:
                 exec(pandas_code, {}, local_vars)
             except SyntaxError as e:
-                print("❌ SyntaxError in GPT-generated code:")
-                print(pandas_code)
+                logging.info("❌ SyntaxError in GPT-generated code:")
+                logging.info(pandas_code)
                 raise e
             answer = local_vars.get("answer", "No answer returned.")
 
@@ -322,7 +350,7 @@ def handle_message(message, say):
             else:
                 result = str(answer)
             summarized = summarizer(result, prompt)
-            print(summarized.capitalize())
+            logging.info(summarized.capitalize())
 
             app.client.chat_update(
                 channel=channel_id,
@@ -332,7 +360,7 @@ def handle_message(message, say):
             break
 
         except Exception as e:
-            print(f"Attempt {attempt} failed: {e}")
+            logging.info(f"Attempt {attempt} failed: {e}")
             time.sleep(delay)
             if attempt == retries:
                 app.client.chat_update(
@@ -346,4 +374,3 @@ def handle_message(message, say):
 if __name__ == "__main__":
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     handler.connect()
-
