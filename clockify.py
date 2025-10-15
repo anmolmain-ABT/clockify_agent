@@ -190,7 +190,7 @@ def load_data(channel_id=None):
             df_combined = pd.concat([df_existing, df_new], ignore_index=True)
     except Exception:
         df_combined = download_clockify_data()
-
+    logging.info(df_combined.head(5))
     df_combined.columns = [str(col).lower() for col in df_combined.columns]
     str_cols = df_combined.select_dtypes(include=['object']).columns
     df_combined[str_cols] = df_combined[str_cols].apply(lambda x: x.apply(lambda y: y.lower() if isinstance(y, str) else y))
