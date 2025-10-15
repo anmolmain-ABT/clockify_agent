@@ -164,6 +164,7 @@ def load_data(channel_id=None):
     logging.info("Preloading Clockify data...")
     print("Preloading Clockify data...")
 
+
     try:
         df_existing = read_from_sheet()
         if df_existing.empty:
