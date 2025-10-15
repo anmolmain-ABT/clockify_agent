@@ -185,9 +185,13 @@ def load_data(channel_id=None):
         df_combined = download_clockify_data()
 
     # Standardize column names
+    print("Standardize column names")
+    logging.info("Standardize column names")
     df_combined.columns = [str(col).lower() for col in df_combined.columns]
 
     # Convert string columns to lowercase
+    print("Convert string columns to lowercase")
+    logging.info("Convert string columns to lowercase")
     str_cols = df_combined.select_dtypes(include=['object']).columns
     df_combined[str_cols] = df_combined[str_cols].apply(lambda x: x.str.lower())
 
@@ -326,11 +330,14 @@ def sudo_download_file_command(channel_id):
 @app.event("message")
 def handle_message(message, say):
     user_text = message.get("text")
+    logging.info(f"Query : {user_text}")
+    print(f"Query : {user_text}")
     if not user_text:
         logging.warning("Empty message received. Ignoring.")
+        print("Empty message received. Ignoring.")
         return
 
-    prompt = user_text.lower()
+    prompt = str(user_text).lower()
     channel_id = message.get("channel")
 
     # ---------------- Force refresh command ----------------
@@ -351,6 +358,8 @@ def handle_message(message, say):
         try:
             raw_code = gpt_response(user_text)
             pandas_code = clean_gpt_code(raw_code)
+            print(pandas_code)
+            logging.info(pandas_code)
             local_vars = {"df": data}
             try:
                 exec(pandas_code, {}, local_vars)
@@ -368,6 +377,7 @@ def handle_message(message, say):
                 result = str(answer)
             summarized = summarizer(result, prompt)
             logging.info(summarized.capitalize())
+            print(summarized.capitalize())
 
             app.client.chat_update(
                 channel=channel_id,
@@ -383,7 +393,7 @@ def handle_message(message, say):
                 app.client.chat_update(
                     channel=channel_id,
                     ts=processing_message["ts"],
-                    text=f"❌ Failed to process your request: {e}"
+                    text=f"❌ Failed to process your request: {e} {e.with_traceback}"
                 )
 
 
