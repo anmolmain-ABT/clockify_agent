@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import logging
+import json
 # --------------------- Load environment variables ---------------------
 load_dotenv()
 
@@ -49,18 +50,23 @@ def keep_alive():
 
 # --------------------- Google Sheets ---------------------
 def get_gsheet_client():
-    if GOOGLE_CREDENTIALS_FILE is None:
-        raise ValueError("GOOGLE_CREDENTIALS_FILE path is not set in .env")
+    creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+    if not creds_json:
+        raise ValueError("GOOGLE_CREDENTIALS_JSON is not set in .env")
+
+    # Load the JSON from the environment variable
+    creds_dict = json.loads(creds_json)
+
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive.file",
         "https://www.googleapis.com/auth/drive"
     ]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDENTIALS_FILE, scope)
+
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
     return client
-
 def write_to_sheet(df):
     client = get_gsheet_client()
     sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
